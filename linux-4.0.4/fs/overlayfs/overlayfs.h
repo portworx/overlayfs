@@ -180,6 +180,7 @@ static inline void ovl_copyattr(struct inode *from, struct inode *to)
 {
 	to->i_uid = from->i_uid;
 	to->i_gid = from->i_gid;
+	to->i_size = from->i_sb->s_maxbytes;
 }
 
 /* dir.c */

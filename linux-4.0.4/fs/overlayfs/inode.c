@@ -8,8 +8,12 @@
  */
 
 #include <linux/fs.h>
+#include <linux/file.h>
+#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/xattr.h>
+#include <linux/pagemap.h>
+#include <linux/module.h>
 #include "overlayfs.h"
 
 static int ovl_copy_up_last(struct dentry *dentry, struct iattr *attr,
@@ -336,16 +340,23 @@ static bool ovl_open_need_copy_up(int flags, enum ovl_path_type type,
 	return true;
 }
 
-static int ovl_dentry_open(struct dentry *dentry, struct file *file,
-		    const struct cred *cred)
+struct ovl_filep_data {
+	struct file *lower_file;
+	struct file *upper_file;
+};
+
+static int ovl_dentry_open(struct dentry *dentry, struct file *file, 
+						const struct cred *cred)
 {
-	int err;
+	int err, opened = 0;
 	struct path realpath;
 	enum ovl_path_type type;
 	bool want_write = false;
+	struct ovl_filep_data *ofd = NULL;
 
 	type = ovl_path_real(dentry, &realpath);
 	if (ovl_open_need_copy_up(file->f_flags, type, realpath.dentry)) {
+
 		want_write = true;
 		err = ovl_want_write(dentry);
 		if (err)
@@ -359,15 +370,169 @@ static int ovl_dentry_open(struct dentry *dentry, struct file *file,
 			goto out_drop_write;
 
 		ovl_path_upper(dentry, &realpath);
-	}
 
-	err = vfs_open(&realpath, file, cred);
+		invalidate_inode_pages2(dentry->d_inode->i_mapping);
+
+		err = vfs_open(&realpath, file, cred);
+
+	} else if (!OVL_TYPE_UPPER(type) & 
+			!special_file(realpath.dentry->d_inode->i_mode)) {
+
+		ofd = kmalloc(sizeof(struct ovl_filep_data), GFP_KERNEL);
+		if (!ofd)
+			return -ENOMEM;
+
+		ofd->upper_file = NULL;
+		ofd->lower_file = dentry_open(&realpath, file->f_flags, cred);
+		if (IS_ERR(ofd->lower_file)) {
+			err = PTR_ERR(ofd->lower_file);
+			kfree(ofd);
+			return err;
+		}
+
+		err = finish_open(file, dentry, NULL, &opened);
+		if (err == 0) {
+			file->private_data = ofd;
+			ofd = NULL;
+		}
+	} else {
+		err = vfs_open(&realpath, file, cred);
+	}
+                                                                               
 out_drop_write:
 	if (want_write)
 		ovl_drop_write(dentry);
 out:
+	if (ofd) {
+		if (ofd->lower_file) 
+			fput(ofd->lower_file);
+		kfree(ofd);
+	}
 	return err;
 }
+
+static struct file *ovl_file_mux(struct file *file) 
+{
+	static DEFINE_SPINLOCK(ovl_filp_lock); 
+
+	struct path realpath;
+	enum ovl_path_type type = ovl_path_real(file->f_path.dentry, &realpath);
+	struct ovl_filep_data *ofd = file->private_data;
+	struct file *f;
+
+	if (!OVL_TYPE_UPPER(type)) 
+		return ofd->lower_file;
+	
+	if (ofd->upper_file) 
+		return ofd->upper_file;
+	
+	f = dentry_open(&realpath, file->f_flags, current_cred());
+	if (IS_ERR(f)) 
+		return f;
+
+	spin_lock(&ovl_filp_lock);
+	if (!ofd->upper_file) {
+		ofd->upper_file = f;
+		f = NULL;
+	}
+	spin_unlock(&ovl_filp_lock);
+	if (f) fput(f);
+
+	return ofd->upper_file;
+}
+
+static loff_t ovl_llseek(struct file *file, loff_t offset, int whence)
+{
+	struct file *f;
+	struct inode *inode;
+	loff_t ret;
+
+	f = ovl_file_mux(file);
+	if (IS_ERR(f))
+		return PTR_ERR(f);
+
+	inode = f->f_path.dentry->d_inode;
+
+	ret = generic_file_llseek_size(file, offset, whence,
+					inode->i_sb->s_maxbytes,
+					i_size_read(inode));
+	if (ret < 0)
+		return ret;
+
+	return vfs_llseek(f, offset, whence);
+}
+
+static ssize_t ovl_read(struct file *file, char __user *buf,
+			size_t size, loff_t *ppos)
+{
+	struct file *f;
+
+	f = ovl_file_mux(file);
+	if (IS_ERR(f))
+		return PTR_ERR(f);
+
+	return vfs_read(f, buf, size, ppos);
+}
+
+static int ovl_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	return generic_file_readonly_mmap(file, vma);
+}
+
+
+static int ovl_release(struct inode *inode, struct file *filp)
+{
+	struct ovl_filep_data *ofd = filp->private_data;
+
+	if (ofd) {
+		if (ofd->lower_file) fput(ofd->lower_file);
+		if (ofd->upper_file) fput(ofd->upper_file);
+		kfree(ofd);
+		filp->private_data = NULL;
+	}
+	return 0;
+}
+
+static int ovl_readpage(struct file *file, struct page *page)
+{
+	struct file *f;
+	struct page *p;
+	void *src, *dst;
+
+	f = ovl_file_mux(file);
+	if (IS_ERR(f))
+		return PTR_ERR(f);
+
+	p = read_cache_page_gfp(f->f_path.dentry->d_inode->i_mapping,
+				   page->index, GFP_NOFS);
+
+	if (!IS_ERR_OR_NULL(p)) {
+
+		src = kmap(p);
+		dst = kmap(page);
+
+		memcpy(dst, src, PAGE_SIZE);
+
+		SetPageUptodate(page);
+		unlock_page(page);	
+		kunmap(p);
+		kunmap(page);
+		page_cache_release(p);
+	}
+	return 0;
+}
+
+static const struct address_space_operations ovl_aops = {
+	.readpage		= ovl_readpage,
+};
+
+static const struct file_operations ovl_file_operations =
+{
+	.llseek		= ovl_llseek,
+	.read		= ovl_read,
+	.mmap		= ovl_mmap,
+	.release	= ovl_release,
+};
 
 static const struct inode_operations ovl_file_inode_operations = {
 	.setattr	= ovl_setattr,
@@ -416,6 +581,7 @@ struct inode *ovl_new_inode(struct super_block *sb, umode_t mode,
 
 	case S_IFLNK:
 		inode->i_op = &ovl_symlink_inode_operations;
+		inode->i_fop = &ovl_file_operations;
 		break;
 
 	case S_IFREG:
@@ -424,6 +590,8 @@ struct inode *ovl_new_inode(struct super_block *sb, umode_t mode,
 	case S_IFCHR:
 	case S_IFIFO:
 		inode->i_op = &ovl_file_inode_operations;
+		inode->i_fop = &ovl_file_operations;
+		inode->i_mapping->a_ops = &ovl_aops;
 		break;
 
 	default:
@@ -433,4 +601,5 @@ struct inode *ovl_new_inode(struct super_block *sb, umode_t mode,
 	}
 
 	return inode;
+
 }
