@@ -514,11 +514,11 @@ static int ovl_readpage(struct file *file, struct page *page)
 		memcpy(dst, src, PAGE_SIZE);
 
 		SetPageUptodate(page);
-		unlock_page(page);	
 		kunmap(p);
 		kunmap(page);
 		page_cache_release(p);
 	}
+	unlock_page(page);	
 	return 0;
 }
 
