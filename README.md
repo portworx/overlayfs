@@ -19,8 +19,10 @@ Specifically quoting from https://lkml.org/lkml/2014/5/23/155 :
 
 ```
 We address this by attaching file struct coming from VFS to ovlfs's inode.
-We intercept read and readpage operations and redirect to a cached file struct opened on upper/lower fs.
-i_size is set s_maxbytes for ovlfs's inode to allow passthrough of read calls from VFS. 
+We intercept read and readpage operations and redirect them to a cached file struct opened on upper/lower fs.
+
+i_size is set to s_maxbytes for ovlfs's inode to allow passthrough of read calls from VFS. 
+
 lseek with SEEK_END is not an issue as we use generic_file_llseek_size() which takes eof offset as an argument.
 
 
