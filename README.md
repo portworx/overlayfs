@@ -1,7 +1,7 @@
 # Overlayfs
 
 
-Address limitations of overlayfs. 
+Address some "non -standard behaviour" of overlayfs. 
 
 Specifically quoting from https://lkml.org/lkml/2014/5/23/155 :
 
