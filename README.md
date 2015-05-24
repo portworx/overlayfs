@@ -18,6 +18,8 @@ Specifically quoting from https://lkml.org/lkml/2014/5/23/155 :
 +apply to the copied up file.
 
 ```
+This problem is demonstrated by the test program:
+https://github.com/portworx/overlayfs/blob/master/test/ovl_rw_bug.c
 
 The general approach taken in this fix is:
 1. Attach file struct coming from VFS to ovlfs's inode.
