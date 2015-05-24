@@ -31,6 +31,4 @@ Known issues:
 * This change does not address overlay fs non-standard behavior with respect to hardlinks and locking.
 * Page cache duplication in readpage path:
 If a file, that is not yet copied up, is mmap'd and read, page cache for both lower fs and ovl fs is populated. 
-This does not happen for normal reads, as ovl can avoid page cache while redirecting the read call to lower fs.
-
-If we try to redirect readpage call coming from page fault handler for the mmap'd region to a directIO call on lower fs, it results in dio to a kernel page. At present http://www.spinics.net/lists/linux-fsdevel/msg80902.html does not allow it.
+This does not happen for normal reads, as ovl can avoid page cache while redirecting the read call to lower fs. If we try to redirect readpage call coming from page fault handler for the mmap'd region to a directIO call on lower fs, it results in dio to a kernel page. At present http://www.spinics.net/lists/linux-fsdevel/msg80902.html does not allow it.
