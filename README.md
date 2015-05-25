@@ -3,7 +3,7 @@
 
 Address some non-standard behaviour of overlayfs. 
 
-Specifically quoting from https://lkml.org/lkml/2014/5/23/155 :
+Specifically, quoting from https://lkml.org/lkml/2014/5/23/155 :
 
 ```
 +Non-standard behavior
@@ -22,10 +22,10 @@ This problem is demonstrated by the test program:
 https://github.com/portworx/overlayfs/blob/master/test/ovl_rw_bug.c
 
 The general approach taken in this fix is:
-1. Attach file struct coming from VFS to ovlfs's inode.
-2.  Implement read and readpage operations and redirect them to a cached file struct opened on upper/lower fs
-3. i_size is set to s_maxbytes for ovlfs's inode to allow passthrough of read calls from VFS. 
- * lseek with SEEK_END is not an issue as we use generic_file_llseek_size() which takes eof offset as an argument.
+ 1. Attach file struct coming from VFS to ovlfs's inode.
+ 2. Implement read and readpage operations and redirect them to a cached file struct opened on upper/lower fs
+ 3. i_size is set to s_maxbytes for ovlfs's inode to allow passthrough of read calls from VFS. 
+  * lseek with SEEK_END is not an issue as we use generic_file_llseek_size() which takes eof offset as an argument.
 
 
 Known issues:
