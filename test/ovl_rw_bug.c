@@ -53,7 +53,7 @@ int main() {
 		exit(4);
 	}
 
-	/* Read from lower layer */
+	/* Diff data written and data read */
 	if (memcmp(wrbuf, rdbuf, BUF_SZ) != 0) {
 		fprintf(stderr, "Data Mismatch!\n");
 		exit(5);
