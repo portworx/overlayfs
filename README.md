@@ -42,5 +42,5 @@ Overlayfs and Docker
 
 Fixes the following two issues:
 
-https://github.com/docker/docker/issues/10180
-https://github.com/coreos/coreos-overlay/issues/1153
+* https://github.com/docker/docker/issues/10180
+* https://github.com/coreos/coreos-overlay/issues/1153
