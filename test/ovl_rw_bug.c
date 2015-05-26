@@ -33,10 +33,8 @@ int main() {
 
 	if (fd2 < 0) {
 		fprintf(stderr, "Failed to open upper layer file: %s error %s\n",
-
 				filename, strerror(errno));
 		exit(2);
-
 	}
 
 	/* Write to upper layer */
@@ -59,6 +57,8 @@ int main() {
 		exit(5);
 	}
 	fprintf(stdout, "Success!\n");
+
+	exit(0);
 }
 
 
