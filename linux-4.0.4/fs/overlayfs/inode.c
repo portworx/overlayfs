@@ -340,19 +340,14 @@ static bool ovl_open_need_copy_up(int flags, enum ovl_path_type type,
 	return true;
 }
 
-struct ovl_filep_data {
-	struct file *lower_file;
-	struct file *upper_file;
-};
-
 static int ovl_dentry_open(struct dentry *dentry, struct file *file, 
 						const struct cred *cred)
 {
 	int err, opened = 0;
+	struct file *f;
 	struct path realpath;
 	enum ovl_path_type type;
 	bool want_write = false;
-	struct ovl_filep_data *ofd = NULL;
 
 	type = ovl_path_real(dentry, &realpath);
 	if (ovl_open_need_copy_up(file->f_flags, type, realpath.dentry)) {
@@ -378,23 +373,15 @@ static int ovl_dentry_open(struct dentry *dentry, struct file *file,
 	} else if (!OVL_TYPE_UPPER(type) & 
 			!special_file(realpath.dentry->d_inode->i_mode)) {
 
-		ofd = kmalloc(sizeof(struct ovl_filep_data), GFP_KERNEL);
-		if (!ofd)
-			return -ENOMEM;
-
-		ofd->upper_file = NULL;
-		ofd->lower_file = dentry_open(&realpath, file->f_flags, cred);
-		if (IS_ERR(ofd->lower_file)) {
-			err = PTR_ERR(ofd->lower_file);
-			kfree(ofd);
-			return err;
+		f = dentry_open(&realpath, file->f_flags, cred);
+		if (IS_ERR(f)) {
+			err = PTR_ERR(f);
+			goto out;
 		}
+
+		fput(f);
 
 		err = finish_open(file, dentry, NULL, &opened);
-		if (err == 0) {
-			file->private_data = ofd;
-			ofd = NULL;
-		}
 	} else {
 		err = vfs_open(&realpath, file, cred);
 	}
@@ -403,42 +390,16 @@ out_drop_write:
 	if (want_write)
 		ovl_drop_write(dentry);
 out:
-	if (ofd) {
-		if (ofd->lower_file) 
-			fput(ofd->lower_file);
-		kfree(ofd);
-	}
 	return err;
 }
 
-static struct file *ovl_file_mux(struct file *file) 
+static struct file *ovl_file_open(struct file *file) 
 {
-	static DEFINE_SPINLOCK(ovl_filp_lock); 
-
 	struct path realpath;
-	enum ovl_path_type type = ovl_path_real(file->f_path.dentry, &realpath);
-	struct ovl_filep_data *ofd = file->private_data;
-	struct file *f;
 
-	if (!OVL_TYPE_UPPER(type)) 
-		return ofd->lower_file;
-	
-	if (ofd->upper_file) 
-		return ofd->upper_file;
-	
-	f = dentry_open(&realpath, file->f_flags, current_cred());
-	if (IS_ERR(f)) 
-		return f;
+	ovl_path_real(file->f_path.dentry, &realpath);
 
-	spin_lock(&ovl_filp_lock);
-	if (!ofd->upper_file) {
-		ofd->upper_file = f;
-		f = NULL;
-	}
-	spin_unlock(&ovl_filp_lock);
-	if (f) fput(f);
-
-	return ofd->upper_file;
+	return dentry_open(&realpath, file->f_flags, current_cred());
 }
 
 static loff_t ovl_llseek(struct file *file, loff_t offset, int whence)
@@ -447,7 +408,7 @@ static loff_t ovl_llseek(struct file *file, loff_t offset, int whence)
 	struct inode *inode;
 	loff_t ret;
 
-	f = ovl_file_mux(file);
+	f = ovl_file_open(file);
 	if (IS_ERR(f))
 		return PTR_ERR(f);
 
@@ -456,22 +417,27 @@ static loff_t ovl_llseek(struct file *file, loff_t offset, int whence)
 	ret = generic_file_llseek_size(file, offset, whence,
 					inode->i_sb->s_maxbytes,
 					i_size_read(inode));
-	if (ret < 0)
-		return ret;
+	if (ret >= 0)
+		ret = vfs_llseek(f, offset, whence);
 
-	return vfs_llseek(f, offset, whence);
+	fput(f);
+	return ret;
 }
 
 static ssize_t ovl_read(struct file *file, char __user *buf,
 			size_t size, loff_t *ppos)
 {
 	struct file *f;
+	ssize_t ret;
 
-	f = ovl_file_mux(file);
+	f = ovl_file_open(file);
 	if (IS_ERR(f))
 		return PTR_ERR(f);
 
-	return vfs_read(f, buf, size, ppos);
+	ret = vfs_read(f, buf, size, ppos);
+
+	fput(f);
+	return ret;
 }
 
 static int ovl_mmap(struct file *file, struct vm_area_struct *vma)
@@ -480,26 +446,13 @@ static int ovl_mmap(struct file *file, struct vm_area_struct *vma)
 }
 
 
-static int ovl_release(struct inode *inode, struct file *filp)
-{
-	struct ovl_filep_data *ofd = filp->private_data;
-
-	if (ofd) {
-		if (ofd->lower_file) fput(ofd->lower_file);
-		if (ofd->upper_file) fput(ofd->upper_file);
-		kfree(ofd);
-		filp->private_data = NULL;
-	}
-	return 0;
-}
-
 static int ovl_readpage(struct file *file, struct page *page)
 {
 	struct file *f;
 	struct page *p;
 	void *src, *dst;
 
-	f = ovl_file_mux(file);
+	f = ovl_file_open(file);
 	if (IS_ERR(f))
 		return PTR_ERR(f);
 
@@ -519,6 +472,7 @@ static int ovl_readpage(struct file *file, struct page *page)
 		page_cache_release(p);
 	}
 	unlock_page(page);	
+	fput(f);
 	return 0;
 }
 
@@ -531,7 +485,6 @@ static const struct file_operations ovl_file_operations =
 	.llseek		= ovl_llseek,
 	.read		= ovl_read,
 	.mmap		= ovl_mmap,
-	.release	= ovl_release,
 };
 
 static const struct inode_operations ovl_file_inode_operations = {
