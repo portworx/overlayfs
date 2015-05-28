@@ -13,7 +13,6 @@
 #include <linux/slab.h>
 #include <linux/xattr.h>
 #include <linux/pagemap.h>
-#include <linux/module.h>
 #include "overlayfs.h"
 
 static int ovl_copy_up_last(struct dentry *dentry, struct iattr *attr,
