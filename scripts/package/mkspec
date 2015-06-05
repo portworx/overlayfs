@@ -120,8 +120,41 @@ echo "%endif"
 if ! $PREBUILT; then
 echo 'rm -f $RPM_BUILD_ROOT'"/lib/modules/$KERNELRELEASE/{build,source}"
 echo "mkdir -p "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE"
-echo "EXCLUDES=\"$RCS_TAR_IGNORE --exclude .tmp_versions --exclude=*vmlinux* --exclude=*.o --exclude=*.ko --exclude=*.cmd --exclude=Documentation --exclude=firmware --exclude .config.old --exclude .missing-syscalls.d\""
-echo "tar "'$EXCLUDES'" -cf- . | (cd "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE;tar xvf -)"
+
+echo "cp --parents \`find  -type f -name \"Makefile*\" -o -name \"Kconfig*\"\` "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE"
+echo "cp Module.symvers "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE" 
+echo "cp System.map "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE"
+echo "if [ -s Module.markers ]; then"
+echo "	cp Module.markers "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE"
+echo "fi"
+echo "rm -rf "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/Documentation"
+echo "rm -rf "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/scripts"
+echo "rm -rf "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/include"
+echo "cp .config "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE"
+echo "cp -a scripts "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE"
+echo "Arch=x86"
+echo "if [ -d arch/"'$Arch'"/scripts ]; then"
+echo "	cp -a arch/"'$Arch'"/scripts "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/arch/"'$Arch'" || :"
+echo "fi"
+echo "if [ -f arch/"'$Arch'"/*lds ]; then"
+echo "	cp -a arch/"'$Arch'"/*lds "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/arch/"'$Arch'"  || :"
+echo "fi"
+echo "rm -f "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/scripts/*.o"
+echo "rm -f "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/scripts/*/*.o"
+echo "if [ -d arch/"'$Arch'"/include ]; then"
+echo "	cp -a --parents arch/"'$Arch'"/include "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/"
+echo "fi"
+echo "cp -a include "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/include"
+
+    # Make sure the Makefile and version.h have a matching timestamp so that
+    # external modules can be built
+echo "touch -r "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/Makefile "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/include/generated/uapi/linux/version.h"
+echo "touch -r "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/.config "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/include/generated/autoconf.h"
+    # Copy .config to include/config/auto.conf so "make prepare" is unnecessary.
+echo "cp "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/.config "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/include/config/auto.conf"
+
+echo "find "'$RPM_BUILD_ROOT'"/usr/src/kernels/$KERNELRELEASE/ -name \".*.cmd\" -exec rm -f {} \;"
+
 echo 'cd $RPM_BUILD_ROOT'"/lib/modules/$KERNELRELEASE"
 echo "ln -sf /usr/src/kernels/$KERNELRELEASE build"
 echo "ln -sf /usr/src/kernels/$KERNELRELEASE source"
